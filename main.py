@@ -1,59 +1,81 @@
 import numpy as np
+import math
+import vegas
 import matplotlib.pyplot as plt
 
 # --- constants ---
 m = 1.0
 T = 4.0
-N = 7
+N = 9
 a = T / N
 V = lambda x: 0.5 * x**2
-M = 100000
+L = 1.8
 
-# --- random paths ---
-paths = np.random.uniform(-2.5, 2.5, size=(M, N-1))
-
-# --- functions ---
-def energy(x0, xN, path):
-    E = 0
+# --- Euclidean action ---
+def energy(x0, xN, xs):
+    E = 0.0
     x_prev = x0
-    for j in range(N-1):
-        x_next = path[j]
-        mid = 0.5 * (x_prev + x_next)
-        E += (m/2) * ((x_next - x_prev)/a)**2 + V(mid)
-        x_prev = x_next
-    mid = 0.5 * (x_prev + xN)
-    E += (m/2) * ((xN - x_prev)/a)**2 + V(mid)
+    for x in xs:
+        mid = 0.5*(x_prev + x)
+        E += 0.5*m*((x - x_prev)/a)**2 + V(mid)
+        x_prev = x
+    mid = 0.5*(x_prev + xN)
+    E += 0.5*m*((xN - x_prev)/a)**2 + V(mid)
     return E
 
+def make_integrand(x0, xN):
+    def f(xs):
+        return math.exp(-a * energy(x0, xN, xs))
+    return f
+
+# --- VEGAS propagator ---
 def G_hat(x0, xN):
-    total = 0
-    for i in range(M):
-        E = energy(x0, xN, paths[i])
-        total += np.exp(-a * E)
-    G = (m / (2 * np.pi * a))**(N/2) * (total / M)
-    return G
+    integ = vegas.Integrator([(-L, L)] * (N-1))
 
-# --- compute path-integral ---
-x_vals = np.linspace(0, 2, 41)
-G_vals = np.array([G_hat(x, x) for x in x_vals])
+    # warmup
+    integ(make_integrand(x0, xN), nitn=5, neval=4000)
 
-dx = x_vals[1] - x_vals[0]
-Z = dx * np.sum(G_vals)
-psi2 = 0.5 * (G_vals / Z)
+    # main
+    result = integ(make_integrand(x0, xN), nitn=8, neval=20000)
 
-# --- analytical solution ---
-psi2_exact = (1 / np.sqrt(np.pi)) * np.exp(-x_vals**2)
+    A = (m/(2*math.pi*a))**(N/2)
+    return A * result.mean
 
-# --- check normalisation and value at x=1 ---
-print("∫|ψ₀|² dx ≈", np.trapezoid(psi2, x_vals))
-idx_1 = np.argmin(np.abs(x_vals - 1))
-print("|ψ₀(1)|² numeric =", psi2[idx_1])
-print("|ψ₀(1)|² analytic =", psi2_exact[idx_1])
+# -------------------------------
+# COMPUTE SCATTER POINTS (10 pts)
+# -------------------------------
+x_scatter = np.linspace(0, 2, 15)
+G_scatter = np.array([G_hat(x, x) for x in x_scatter])
 
-# --- plot ---
-plt.plot(x_vals, psi2, label='Path integral', lw=2)
-plt.plot(x_vals, psi2_exact, '--', label='Analytical $|ψ₀(x)|²$', lw=2)
+# -------------------------------
+# COMPUTE NORMALISATION USING MANY POINTS
+# -------------------------------
+x_fine = np.linspace(0, 2, 41)
+G_fine = np.array([G_hat(x, x) for x in x_fine])
+Z = np.trapz(G_fine, x_fine)
+
+psi2_scatter = 0.5 * (G_scatter / Z)
+
+# -------------------------------
+# ANALYTIC CURVE FOR PLOTTING
+# -------------------------------
+x_plot = np.linspace(0, 2, 200)
+psi2_exact = (1/np.sqrt(np.pi)) * np.exp(-x_plot**2)
+
+# -------------------------------
+# PLOT
+# -------------------------------
+plt.figure(figsize=(7,5))
+
+plt.scatter(x_scatter, psi2_scatter, color='tab:blue', 
+            label='VEGAS |ψ(x)|²', s=45)
+
+plt.plot(x_plot, psi2_exact, '--', color='tab:orange', 
+         linewidth=2, label='Analytic |ψ(x)|²')
+
+plt.xlim(0, 2)
 plt.xlabel('x')
-plt.ylabel('|ψ₀(x)|²')
+plt.ylabel('|ψ(x)|²')
 plt.legend()
+plt.grid(False)
 plt.show()
