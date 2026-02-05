@@ -1,81 +1,103 @@
 import numpy as np
-import math
-import vegas
 import matplotlib.pyplot as plt
 
-# --- constants ---
-m = 1.0
-T = 4.0
-N = 9
-a = T / N
-V = lambda x: 0.5 * x**2
-L = 1.8
+N = 100
+x = np.zeros(N)
+rng = np.random.default_rng()
 
-# --- Euclidean action ---
-def energy(x0, xN, xs):
-    E = 0.0
-    x_prev = x0
-    for x in xs:
-        mid = 0.5*(x_prev + x)
-        E += 0.5*m*((x - x_prev)/a)**2 + V(mid)
-        x_prev = x
-    mid = 0.5*(x_prev + xN)
-    E += 0.5*m*((xN - x_prev)/a)**2 + V(mid)
-    return E
 
-def make_integrand(x0, xN):
-    def f(xs):
-        return math.exp(-a * energy(x0, xN, xs))
-    return f
+epsilon = 1.4
+a = 0.5
 
-# --- VEGAS propagator ---
-def G_hat(x0, xN):
-    integ = vegas.Integrator([(-L, L)] * (N-1))
 
-    # warmup
-    integ(make_integrand(x0, xN), nitn=5, neval=4000)
+def local_action(x, i):
+    ip = (i + 1) % N
+    im = (i - 1) % N
+    return(
+        (a*x[i]**2)/2 + x[i] * (x[i] - x[im] - x[ip])/a
+    )
+    #return ((x[i] - x[im])**2 + (x[ip] - x[i])**2)/(2*a) + a*(x[i]**2)/2
 
-    # main
-    result = integ(make_integrand(x0, xN), nitn=8, neval=20000)
 
-    A = (m/(2*math.pi*a))**(N/2)
-    return A * result.mean
+def update(x):
+    swaps = 0
+    for i in range(0,N):
+        zeta = rng.uniform(-epsilon, epsilon)
+        x_temp = x[i]
+        S_i = local_action(x, i)
+        x[i] = x[i] + zeta
+        S_f = local_action(x, i)
+        dS = S_f - S_i
+        if dS > 0 and np.exp(-dS) < rng.uniform(0,1):
+            x[i] = x_temp
+        else:
+            swaps += 1
 
-# -------------------------------
-# COMPUTE SCATTER POINTS (10 pts)
-# -------------------------------
-x_scatter = np.linspace(0, 2, 15)
-G_scatter = np.array([G_hat(x, x) for x in x_scatter])
+    #print((swaps / N) * 100)    
+    return x
 
-# -------------------------------
-# COMPUTE NORMALISATION USING MANY POINTS
-# -------------------------------
-x_fine = np.linspace(0, 2, 41)
-G_fine = np.array([G_hat(x, x) for x in x_fine])
-Z = np.trapz(G_fine, x_fine)
+N_cf = 4000
+N_cor = 20
 
-psi2_scatter = 0.5 * (G_scatter / Z)
+samples = []
 
-# -------------------------------
-# ANALYTIC CURVE FOR PLOTTING
-# -------------------------------
-x_plot = np.linspace(0, 2, 200)
-psi2_exact = (1/np.sqrt(np.pi)) * np.exp(-x_plot**2)
+for i in range(10*N_cor):
+    update(x)
 
-# -------------------------------
-# PLOT
-# -------------------------------
-plt.figure(figsize=(7,5))
+for i in range(N_cf):
+    for j in range(N_cor):
+        update(x)
+    samples.append(x[N//2])
 
-plt.scatter(x_scatter, psi2_scatter, color='tab:blue', 
-            label='VEGAS |ψ(x)|²', s=45)
 
-plt.plot(x_plot, psi2_exact, '--', color='tab:orange', 
-         linewidth=2, label='Analytic |ψ(x)|²')
+plt.figure(figsize=(6, 4))
 
-plt.xlim(0, 2)
-plt.xlabel('x')
-plt.ylabel('|ψ(x)|²')
-plt.legend()
-plt.grid(False)
+# numerical solution (histogram)
+plt.hist(
+    samples,
+    bins=80,
+    density=True,
+    label="Numerical solution",
+)
+
+# bin centres
+counts, bins = np.histogram(samples, bins=80, density=True)
+
+centres = 0.5 * (bins[1:] + bins[:-1])
+
+# analytic solution
+psi2 = (1/np.sqrt(np.pi)) * np.exp(-centres**2)
+plt.plot(
+    centres,
+    psi2,
+    label=r"Analytic solution",
+    linewidth=2
+)
+
+plt.xlim(-3.2, 3.2)
+plt.xlabel("x")
+plt.ylabel("Probability density")
+
+plt.legend(frameon=False)   # clean look for reports
+plt.tight_layout()
 plt.show()
+
+counts_raw, bins = np.histogram(samples, bins=80, density=False)
+bin_width = bins[1] - bins[0]
+centres = 0.5 * (bins[1:] + bins[:-1])
+
+N_samples = len(samples)
+
+rho_num = counts_raw / (N_samples * bin_width)
+sigma = np.sqrt(counts_raw) / (N_samples * bin_width)
+rho_ana = (1/np.sqrt(np.pi)) * np.exp(-centres**2)
+
+mask = counts_raw > 0
+
+chi2 = np.sum((rho_num[mask] - rho_ana[mask])**2 / sigma[mask]**2)
+ndof = np.sum(mask) - 1
+
+print(f"Chi^2 = {chi2:.2f}")
+print(f"Chi^2 / ndof = {chi2/ndof:.2f}")
+
+
