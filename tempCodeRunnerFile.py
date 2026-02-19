@@ -1,0 +1,1 @@
+    DeltaE = np.log(G_mean[:-1] / G_mean[1:]) / a
